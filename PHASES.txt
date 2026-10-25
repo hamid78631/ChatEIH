@@ -1,0 +1,152 @@
+===============================================================================
+            PROJET CHATEIH - ASSISTANT RAG DE L'ÉCOLE HÉLIANTHE
+                         PHASES DE RÉALISATION (EN ORDRE)
+===============================================================================
+
+Stack : FastAPI + Pydantic | pdfplumber | Embeddings locaux multilingual-e5-small
+        | Chroma (disque) | Groq (LLM) | React + TypeScript (Vite)
+
+Légende : [x] fait   [ ] à faire
+
+
+===============================================================================
+PHASE 0 - MISE EN PLACE                                      (avant séance 1)
+===============================================================================
+  [x] Dépôt GitHub (hamid78631/ChatEIH) partagé avec l'enseignant
+  [x] Arborescence : backend/ frontend/ data/ eval/ tests/ docs/
+  [x] .gitignore (.env, .venv, node_modules, data/chroma ignorés)
+  [x] .env.example + .env local avec la clé Groq (jamais committé)
+  [x] README (architecture, choix techniques, installation)
+  [x] backend/requirements.txt + backend/app/config.py
+  [x] Corpus : les 7 PDF copiés dans data/corpus (non modifiés)
+  [x] Environnement virtuel .venv à la racine
+  [ ] Installation complète des dépendances (chromadb, sentence-transformers)
+
+
+===============================================================================
+PHASE 1 - EXTRACTION ET DÉCOUPAGE                                  (séance 1)
+===============================================================================
+  Livrable : fragments + métadonnées dans un fichier JSON (data/chunks.json)
+
+  Extraction (backend/app/extraction.py)
+  [ ] Texte extrait page par page, numéro de page conservé
+  [ ] Métadonnées lues dans le tableau d'en-tête de chaque PDF :
+      référence, type, date, version, statut
+  [ ] Détection générique des textes modificatifs : le Statut indique
+      « modifie ... (RÉFÉRENCE) »
+  [ ] Suppression des en-têtes et pieds de page répétés
+  [ ] Tableaux : chaque ligne liée à ses en-têtes
+      ex. « Date : 12 février 2027 — Événement : ... — Public : ... »
+  [ ] Sections repérées (titres, articles, questions de la FAQ)
+
+  Découpage (backend/app/chunking.py) - écrit à la main, sans LangChain
+  [ ] Stratégie (a) "fixed" : taille fixe + chevauchement (500 / 100)
+  [ ] Stratégie (b) "structural" : suit titres, articles, paires Q/R
+  [ ] Chaque fragment : id, fichier, référence, type, date, page, section
+  [ ] Identifiant déterministe (servira à l'ingestion idempotente)
+  [ ] Stratégie et paramètres configurables (.env ou ligne de commande)
+  [ ] Script qui écrit les fragments dans un fichier JSON
+
+
+===============================================================================
+PHASE 2 - INDEXATION ET RECHERCHE                                  (séance 2)
+===============================================================================
+  Livrable : /api/ingest et /api/search testés dans /docs
+
+  [ ] Embeddings multilingual-e5-small (préfixes "query: " / "passage: ")
+  [ ] Collection Chroma persistée dans data/chroma, similarité cosinus
+  [ ] Ingestion idempotente (upsert par id / reconstruction de la collection)
+  [ ] Recherche top-k (k = 5 par défaut) avec scores
+  [ ] Filtre par métadonnée (au minimum le type de document)
+  [ ] Modèles Pydantic des requêtes / réponses
+  [ ] GET  /api/health     (nb de fragments ; 503 si base indisponible)
+  [ ] POST /api/ingest     (stratégie, taille, chevauchement ; 422)
+  [ ] GET  /api/documents  (métadonnées + nb de fragments par document)
+  [ ] POST /api/search     (fragments + scores ; 422 si question vide)
+  [ ] CORS pour le frontend
+
+
+===============================================================================
+PHASE 3 - GÉNÉRATION                                               (séance 3)
+===============================================================================
+  Livrable : /api/ask avec citations, refus et seuil
+
+  [ ] Prompt système écrit à la main :
+        - répondre uniquement à partir des fragments
+        - citer chaque affirmation [1], [2]
+        - phrase de refus exacte si la réponse est absente
+        - en cas de conflit : retenir le plus récent et le signaler
+  [ ] Fragments présentés avec référence, date, type, statut
+  [ ] Gestion générique des versions (via "modifies" et la date, aucune
+      règle écrite en dur pour ce corpus)
+  [ ] Seuil de score : refus sans appel au LLM si meilleur score < seuil
+  [ ] Vérification des citations -> invalid_citations
+  [ ] POST /api/ask (format de réponse imposé, latency_ms ; 422 ; 502)
+  [ ] Tests pytest (au moins 5) :
+        - découpage (fixe + structurel)
+        - refus hors corpus
+        - vérification des citations
+        - validation 422
+        - idempotence de l'ingestion
+
+
+===============================================================================
+PHASE 4 - FRONTEND REACT + TYPESCRIPT                              (séance 4)
+===============================================================================
+  Livrable : conversation, sources, gestion des erreurs
+
+  [ ] Initialisation : npm create vite@latest frontend -- --template react-ts
+  [ ] VITE_API_URL dans frontend/.env (aucune clé LLM côté navigateur)
+  [ ] Module api/ (appels HTTP) + types TypeScript calqués sur Pydantic
+  [ ] Écran Conversation : saisie, historique, citations [n] cliquables
+  [ ] Panneau des sources : document, section, page, date, score, extrait
+  [ ] Écran Documents (GET /api/documents)
+  [ ] Écran Recherche / débogage (POST /api/search)
+  [ ] Réglages top_k + filtre par type
+  [ ] Indicateur de chargement, bouton désactivé pendant l'appel
+  [ ] Messages clairs pour 422 / 502 / 503
+  [ ] Style visuel distinct pour une réponse de refus
+  [ ] Interface utilisable sur mobile
+
+
+===============================================================================
+PHASE 5 - ÉVALUATION                                               (séance 5)
+===============================================================================
+  Livrable : jeu de test, script, comparaison de configurations
+
+  [ ] eval/questions.jsonl (au moins 20 questions) :
+        8 simples | 5 synthèse | 2 version | 5 hors corpus
+      + réponse attendue + document (et page) justificatif
+  [ ] Intégrer les 6 questions de départ du sujet
+  [ ] eval/run_eval.py reproductible :
+        - Hit@k et MRR (pertinence par document + page)
+        - exactitude 0-2 et fidélité aux sources
+        - taux de refus correct / refus à tort
+  [ ] Comparer au moins 2 configurations
+      (fixe vs structurel, k = 3 vs k = 8)
+  [ ] Calibrer SCORE_THRESHOLD à partir des résultats
+  [ ] Expliquer les écarts avec des exemples
+
+
+===============================================================================
+PHASE 6 - LIVRABLES FINAUX ET SOUTENANCE
+===============================================================================
+  [ ] README complet (installation, variables, lancement, choix)
+  [ ] Rapport de 6 pages max (architecture, choix, résultats, limites)
+  [ ] Annexe : déclaration d'utilisation des outils d'IA générative
+  [ ] Commits réguliers tout au long du projet
+  [ ] Soutenance 15 min : démo répétée
+        - une question simple
+        - une question de version (PFE 18 semaines, note 2026-14)
+        - une question hors corpus (refus)
+
+
+===============================================================================
+ORDRE ET DÉPENDANCES
+===============================================================================
+  0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6
+  - Le frontend (4) peut démarrer dès que /api/search existe (fin de 2).
+  - Le jeu de questions (5) peut être rédigé dès la phase 1, en lisant
+    le corpus ; seul le script de mesure attend la phase 3.
+  - Le rapport se rédige au fil de l'eau.
+===============================================================================
