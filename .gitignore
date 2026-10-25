@@ -1,1 +1,27 @@
+# Secrets
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Données générées (reconstruites par l'ingestion)
+data/chroma/
+data/chunks*.json
+
+# Résultats d'évaluation générés
+eval/results/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
