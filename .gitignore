@@ -10,7 +10,6 @@ venv/
 
 # Données générées (reconstruites par l'ingestion)
 data/chroma/
-data/chunks*.json
 
 # Résultats d'évaluation générés
 eval/results/
