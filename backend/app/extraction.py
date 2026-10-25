@@ -1,7 +1,8 @@
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pdfplumber
-
 
 def read_pages(path: Path) -> list[tuple[int, str]]:
     """Lit un PDF et renvoie la liste (numéro de page, texte de la page)."""
@@ -14,6 +15,43 @@ def read_pages(path: Path) -> list[tuple[int, str]]:
 
 
 BULLET = "(cid:127)"  # la puce « • » telle que pdfplumber la lit dans ces PDF
+
+META_KEYS = {
+    "organisme émetteur": "issuer",
+    "type de document": "doc_type",
+    "référence": "reference",
+    "date de publication": "date_label",
+    "version": "version",
+    "public visé": "audience",
+    "statut": "status",
+}
+
+MONTHS = {
+    "janvier": 1, "février": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
+    "juillet": 7, "août": 8, "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12,
+}
+
+# « 5 octobre 2026 », « 1er février 2027 »
+DATE_PATTERN = re.compile(r"(\d{1,2})(?:er)?\s+([a-zéû]+)\s+(\d{4})", re.IGNORECASE)
+# Référence d'un document : EIH-SRE-GUIDE-2026, EIH-DE-NS-2026-14...
+REF_PATTERN = re.compile(r"\b[A-Z]{2,}(?:-[A-Z0-9]+)+\b")
+# Le document se déclare modificatif : « modifie », « modifient », « modificatif »
+AMENDING_PATTERN = re.compile(r"\bmodifi(?:e|ent|catif)\b", re.IGNORECASE)
+
+
+@dataclass
+class DocumentMeta:
+    file: str
+    reference: str = ""
+    doc_type: str = ""
+    date: str = ""         # format ISO AAAA-MM-JJ, pour trier
+    date_label: str = ""   # date telle qu'écrite dans le PDF
+    version: str = ""
+    status: str = ""
+    issuer: str = ""
+    audience: str = ""
+    amending: bool = False                              
+    modifies: list[str] = field(default_factory=list)   
 
 
 def clean_text(text: str) -> str:
@@ -83,20 +121,52 @@ def read_lines(page, table_bboxes=()) -> list[dict]:
         })
     return lines
 
+def parse_french_date(label: str) -> str:
+    """« 5 octobre 2026 » -> « 2026-10-05 » ; chaîne vide si la date est illisible."""
+    match = DATE_PATTERN.search(label)
+    if not match:
+        return ""
+    day, month_name, year = match.groups()
+    month = MONTHS.get(month_name.lower())
+    if month is None:
+        return ""
+    return f"{year}-{month:02d}-{int(day):02d}"
+
+
+def parse_meta_table(rows: list[list[str]], meta: DocumentMeta) -> bool:
+    """Remplit meta si le tableau est le tableau de métadonnées ; renvoie True dans ce cas."""
+    found = False
+    for row in rows:
+        if len(row) < 2:
+            continue
+        field_name = META_KEYS.get(row[0].lower())
+        if field_name:
+            setattr(meta, field_name, row[1])
+            found = True
+    return found
+
+
+def finalize_meta(meta: DocumentMeta) -> None:
+    """Calcule les champs dérivés : date ISO, caractère modificatif, références modifiées."""
+    meta.date = parse_french_date(meta.date_label)
+    meta.amending = bool(AMENDING_PATTERN.search(f"{meta.doc_type} {meta.status}"))
+    if meta.amending:
+        meta.modifies = [ref for ref in REF_PATTERN.findall(meta.status) if ref != meta.reference]
+
+
+def read_metadata(path: Path) -> DocumentMeta:
+    """Lit le tableau de métadonnées de la page 1 d'un PDF."""
+    meta = DocumentMeta(file=path.name)
+    with pdfplumber.open(path) as pdf:
+        for table in read_tables(pdf.pages[0]):
+            if parse_meta_table(table["rows"], meta):
+                break
+    finalize_meta(meta)
+    return meta
+
 
 if __name__ == "__main__":
-    pdf_path = Path("data/corpus/04_Calendrier_academique_2026-2027.pdf")
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[0]
-        tables = read_tables(page)
-        print(f"{len(tables)} tableaux trouvés\n")
-        for table in tables:
-            header, *data = table["rows"]
-            print("En-têtes :", header)
-            for row in data[:3]:
-                print("   ", table_row_text(header, row))
-            print()
-
-        print("--- Lignes hors tableaux ---")
-        for line in read_lines(page, [t["bbox"] for t in tables]):
-            print(f"{line['top']:6} {line['size']:5} {line['text'][:80]}")
+    for pdf_path in sorted(Path("data/corpus").glob("*.pdf")):
+        meta = read_metadata(pdf_path)
+        modif = f"modifie {meta.modifies}" if meta.amending else ""
+        print(f"{meta.file[:30]:30} {meta.reference:20} {meta.date}  v{meta.version[:3]:4} {modif}")
